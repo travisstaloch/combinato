@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const mod = b.addModule("combinato", .{
-        .root_source_file = b.path("src/combinado.zig"),
+        .root_source_file = b.path("src/combinato.zig"),
     });
 
     const target = b.standardTargetOptions(.{});
