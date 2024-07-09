@@ -197,49 +197,55 @@ pub fn Parser(comptime Err: type) type {
         }
 
         /// Consumes one byte if 'f' succeeds.
-        pub inline fn func(f: *const fn (u8) bool) Self {
-            var set = CharSet.initEmpty();
-            for (0..256) |c| set.setValue(c, f(@intCast(c)));
-            const final = set;
-            return .{
-                .run = struct {
-                    fn run(self: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
-                        const c = input[0];
-                        return if (self.dataAs(*const CharSet).isSet(c))
-                            input[1..]
-                        else
-                            error.ParseFailure;
-                    }
-                }.run,
-                .data = @ptrCast(&final),
-                .tag = .charset,
-            };
+        pub inline fn func(comptime f: *const fn (u8) bool) Self {
+            @setEvalBranchQuota(4000);
+            comptime {
+                var set = CharSet.initEmpty();
+                for (0..256) |c| set.setValue(c, f(@intCast(c)));
+                const final = set;
+                return .{
+                    .run = struct {
+                        fn run(self: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
+                            const c = input[0];
+                            return if (self.dataAs(*const CharSet).isSet(c))
+                                input[1..]
+                            else
+                                error.ParseFailure;
+                        }
+                    }.run,
+                    .data = @ptrCast(&final),
+                    .tag = .charset,
+                };
+            }
         }
 
         /// Succeeds if the string passed in starts with 'c'.  Consumes one
         /// byte on success.
-        pub inline fn anychar(cs: *const []const u8) Self {
-            var set = CharSet.initEmpty();
-            for (cs.*) |c| set.set(c);
-            const final = set;
-            return .{
-                .run = struct {
-                    fn run(self: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
-                        const cset = self.dataAs(*const CharSet).*;
-                        return if (cset.isSet(input[0]))
-                            input[1..]
-                        else
-                            error.ParseFailure;
-                    }
-                }.run,
-                .data = @ptrCast(&final),
-                .tag = .charset,
-            };
+        pub inline fn anychar(comptime cs: *const []const u8) Self {
+            @setEvalBranchQuota(4000);
+            comptime {
+                var set = CharSet.initEmpty();
+                for (cs.*) |c| set.set(c);
+                const final = set;
+                return .{
+                    .run = struct {
+                        fn run(self: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
+                            const cset = self.dataAs(*const CharSet).*;
+                            return if (cset.isSet(input[0]))
+                                input[1..]
+                            else
+                                error.ParseFailure;
+                        }
+                    }.run,
+                    .data = @ptrCast(&final),
+                    .tag = .charset,
+                };
+            }
         }
 
         /// Succeeds if the string passed in starts with any char in set.
         /// Consumes one byte on success.
-        pub inline fn charset(set: *const CharSet) Self {
+        pub fn charset(set: *const CharSet) Self {
             return .{
                 .run = struct {
                     fn run(self: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
@@ -320,6 +326,17 @@ pub fn Parser(comptime Err: type) type {
             pub fn init(parser: Self, coptions: CountedOptions) Counted {
                 return .{ .parser = parser, .options = coptions };
             }
+
+            fn run(c: *const Counted, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                var count: u32 = 0;
+                var in = input;
+                while (count < c.options.max) : (count += 1) {
+                    const mrest = c.parser.run(&c.parser, userdata, in);
+                    traceRest("cnt", .{}, mrest);
+                    in = mrest catch break;
+                }
+                return if (count >= c.options.min) in else error.ParseFailure;
+            }
         };
 
         /// Repeatedly calls 'parser' up to 'data.max' times and succeeds
@@ -328,15 +345,8 @@ pub fn Parser(comptime Err: type) type {
             return .{
                 .run = struct {
                     fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
-                        var count: u32 = 0;
-                        var in = input;
                         const c = self.dataAs(*const Counted);
-                        while (count < c.options.max) : (count += 1) {
-                            const mrest = c.parser.run(&c.parser, userdata, in);
-                            traceRest("cnt", .{}, mrest);
-                            in = mrest catch break;
-                        }
-                        return if (count >= c.options.min) in else error.ParseFailure;
+                        return c.run(userdata, input);
                     }
                 }.run,
                 .data = data,
@@ -346,17 +356,33 @@ pub fn Parser(comptime Err: type) type {
 
         /// Always succeeds, repeatedly calling 'parser' until it fails.
         pub inline fn many(parser: Self) Self {
-            var p = counted(&.{ .parser = parser, .options = .{} });
-            p.tag = .many;
-            return p;
+            // FIXME: stack use after free
+            return .{
+                .run = struct {
+                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                        const c = self.dataAs(*const Counted);
+                        return c.run(userdata, input);
+                    }
+                }.run,
+                .data = &Counted.init(parser, .{}),
+                .tag = .many,
+            };
         }
 
         /// Succeeds when 'parser' succeeds once.  Repeatedly calls 'parser'
         /// until it fails.
         pub inline fn some(parser: Self) Self {
-            var p = counted(&.{ .parser = parser, .options = .{ .min = 1 } });
-            p.tag = .some;
-            return p;
+            // FIXME: stack use after free
+            return .{
+                .run = struct {
+                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                        const c = self.dataAs(*const Counted);
+                        return c.run(userdata, input);
+                    }
+                }.run,
+                .data = &Counted.init(parser, .{ .min = 1 }),
+                .tag = .some,
+            };
         }
 
         /// Always succeeds returning the result of 'parser' when it
@@ -611,6 +637,7 @@ pub fn Parser(comptime Err: type) type {
         /// and uses that to decide when to stop scanning without needing to
         /// run 'parser'.
         pub inline fn until(parser: Self) Self {
+            // FIXME: stack use after free
             // calc first set once and store in data
             var set = CharSet.initEmpty();
             parser.firstSet(&set);
@@ -819,6 +846,7 @@ pub fn Parser(comptime Err: type) type {
         pub const lowercase = range(&"az".*);
         pub const uppercase = range(&"AZ".*);
         pub inline fn digit(base: u8) Self {
+            // FIXME: stack use after free
             return range(&.{ '0', '0' - 1 + base });
         }
         pub const whitespace = blk: {

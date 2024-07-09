@@ -2,7 +2,7 @@ test {
     _ = @import("json.zig");
 }
 
-const P = combinado.Parser(mem.Allocator.Error ||
+const P = combinato.Parser(mem.Allocator.Error ||
     std.fmt.ParseIntError ||
     std.io.FixedBufferStream([]u8).WriteError);
 
@@ -87,6 +87,13 @@ test "anychar" {
     try expectResult(vowels, "", error.ParseFailure);
     try expectResult(vowels, " ", error.ParseFailure);
     try expectResult(vowels, "a", "");
+    const anychar = comptime blk: {
+        var all_u8s: [256]u8 = undefined;
+        for (0..256) |i| all_u8s[i] = @intCast(i);
+        break :blk P.anychar(&&all_u8s);
+    };
+    try expectResult(&anychar, "\x00", "");
+    try expectResult(&anychar, "\xff", "");
 }
 
 test "charset" {
@@ -499,5 +506,5 @@ test "iterator" {
 const std = @import("std");
 const testing = std.testing;
 const mem = std.mem;
-const combinado = @import("combinado");
-const CharSet = combinado.CharSet;
+const combinato = @import("combinato");
+const CharSet = combinato.CharSet;

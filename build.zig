@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    const mod = b.addModule("combinado", .{
+    const mod = b.addModule("combinato", .{
         .root_source_file = b.path("src/combinado.zig"),
     });
 
@@ -14,7 +14,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    tests.root_module.addImport("combinado", mod);
+    tests.root_module.addImport("combinato", mod);
     const test_filter = b.option([]const u8, "test-filter", "");
     tests.filters = if (test_filter) |tf|
         b.allocator.dupe([]const u8, &.{tf}) catch @panic("OOM")
@@ -35,7 +35,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    json.root_module.addImport("combinado", mod);
+    json.root_module.addImport("combinato", mod);
     b.installArtifact(json);
     const json_run = b.addRunArtifact(json);
     if (b.args) |args| json_run.addArgs(args);
