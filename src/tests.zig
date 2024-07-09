@@ -426,8 +426,6 @@ test "isNullable" {
     try testing.expect(P.alt(&&.{ a.many(), a }).isNullable());
     try testing.expect(P.alt(&&.{ a, a.many() }).isNullable());
     try testing.expect(!P.alt(&&.{ a, a }).isNullable());
-
-    try testing.expect(P.until(a).isNullable());
 }
 
 fn expectFirstSet(p: P.Self, expected: []const u8) !void {
@@ -479,7 +477,6 @@ test "first sets" {
     try expectFirstSet(P.sepBy(&.{ a, a }), "\x00a");
     const int = P.digit(10).some();
     try expectFirstSet(int, "0123456789");
-    try expectFirstSet(P.until(a.not()), "\x00a");
 
     // seq
     try expectFirstSet(P.seq(&&.{ P.epsilon, a }), "\x00a");
@@ -489,24 +486,6 @@ test "first sets" {
     try expectFirstSet(P.seq(&&.{ P.amp(&P.range(&.{ 0, 1 })), a }), &.{ 0, 1, 'a' });
     // alt
     try expectFirstSet(P.alt(&&.{ P.epsilon, a }), "\x00a");
-}
-
-test "until" {
-    const until_ws_comma = &P.seq(&&.{ P.many_whitespace, P.char(&',') })
-        .until();
-    try expectResult(until_ws_comma, "foo , ", " , ");
-    try expectResult(until_ws_comma, "foo", "");
-}
-
-test "iterator" {
-    const ws = P.many_whitespace;
-    const comma = P.seq(&&.{ ws, P.char(&','), ws });
-    var iter = P.iterator(&comma, null, "a, b,c  ,   d ");
-    const expected = [_][]const u8{ "a", "b", "c", "d " };
-    var i: u8 = 0;
-    while (iter.next()) |ele| : (i += 1) {
-        try testing.expectEqualStrings(expected[i], ele);
-    }
 }
 
 const std = @import("std");

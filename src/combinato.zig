@@ -32,7 +32,6 @@ const Tag = enum {
     sepby1,
     sepby,
     then,
-    until,
 };
 
 pub const ParseError = error{ ParseFailure, MissingUserdata };
@@ -57,8 +56,8 @@ pub const CharSetFmt = struct {
 
 /// Parser combinators which pass around user defined data.
 ///
-/// Some parser methods are be marked inline to avoid returning dangling
-/// pointers.
+/// Some parser methods (func, anychar) have comptime semantics to avoid
+/// returning dangling pointers.
 pub fn Parser(comptime Err: type) type {
     return struct {
         run: *const ParseFn,
@@ -87,10 +86,8 @@ pub fn Parser(comptime Err: type) type {
                 .charset => assert(T == *const CharSet),
                 .string => assert(T == *const []const u8),
                 .seq, .alt => assert(T == *const []const Self),
-
                 .ref => assert(T == *const fn () Self),
                 .sepby, .sepby1 => assert(T == *const [2]Self),
-                .until => assert(T == *const Until),
             }
             return @ptrCast(@alignCast(p.data));
         }
@@ -544,10 +541,10 @@ pub fn Parser(comptime Err: type) type {
             return .{
                 .run = struct {
                     fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
-                        const w = try runAndCapture(self.dataAs(*const Self), userdata, input);
+                        const r = try runAndCapture(self.dataAs(*const Self), userdata, input);
                         // trace("map captured {any} rest {s}\n", .{ w.captured, w.rest });
-                        try action(userdata, w.captured);
-                        return w.rest;
+                        try action(userdata, r.captured);
+                        return r.rest;
                     }
                 }.run,
                 .data = parser,
@@ -650,79 +647,6 @@ pub fn Parser(comptime Err: type) type {
             };
         }
 
-        const Until = struct {
-            parser: Self,
-            set: CharSet,
-        };
-
-        /// Returns input until 'parser' succeeds or eof.
-        /// until() might be slow on inputs where matching characters
-        /// are common in the input.  That is because it does a linear scan of
-        /// input.  To compensate for this, it calculates 'parser's first set
-        /// and uses that to decide when to stop scanning without needing to
-        /// run 'parser'.
-        pub inline fn until(parser: Self) Self {
-            // FIXME: stack use after free
-            // calc first set once and store in data
-            var set = CharSet.initEmpty();
-            parser.firstSet(&set);
-            const final = set;
-            return .{
-                .run = struct {
-                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
-                        const u = self.dataAs(*const Until);
-                        trace("until set {}\n", .{CharSetFmt{ .set = u.set }});
-                        var pos: usize = 0;
-                        while (pos < input.len) : (pos += 1) {
-                            const c = input[pos];
-                            if (u.set.isSet(c)) {
-                                if (u.parser.run(&u.parser, userdata, input[pos..])) |r| {
-                                    trace("until '{s}'\n", .{r});
-                                    break;
-                                } else |_| {}
-                            }
-                        }
-                        return input[pos..];
-                    }
-                }.run,
-                .data = &Until{ .parser = parser, .set = final },
-                .tag = .until,
-            };
-        }
-
-        pub const Iterator = struct {
-            input: [:0]const u8,
-            parser: *const Self,
-            userdata: ?*anyopaque,
-
-            pub fn next(iter: *Iterator) ?[]const u8 {
-                if (iter.input.len > 0) {
-                    const p = iter.parser.until();
-                    if (p.run(&p, iter.userdata, iter.input)) |r| {
-                        const len = @intFromPtr(r.ptr) - @intFromPtr(iter.input.ptr);
-                        const s = iter.input[0..len];
-                        // parse rest with the separator parser
-                        const r2 = iter.parser.run(iter.parser, iter.userdata, r) catch r;
-                        const len2 = @intFromPtr(r2.ptr) - @intFromPtr(r.ptr);
-                        // trace("len {} s '{s}' x '{s}'\n", .{ len, s, x });
-                        iter.input = iter.input[len + len2 ..];
-                        return s;
-                    } else |_| {
-                        iter.input = iter.input[iter.input.len..];
-                    }
-                }
-                return null;
-            }
-        };
-
-        pub fn iterator(
-            parser: *const Self,
-            userdata: ?*anyopaque,
-            input: [:0]const u8,
-        ) Iterator {
-            return .{ .input = input, .parser = parser, .userdata = userdata };
-        }
-
         pub fn isNullable(p: Self) bool {
             switch (p.tag) {
                 .epsilon,
@@ -730,7 +654,6 @@ pub fn Parser(comptime Err: type) type {
                 .rest,
                 .opt,
                 .sepby,
-                .until,
                 .many,
                 => return true,
                 .not,
@@ -810,10 +733,6 @@ pub fn Parser(comptime Err: type) type {
                     }
                 },
                 .string => set.set(p.dataAs(*const []const u8).*[0]),
-                .until,
-                => {
-                    set.setUnion(p.dataAs(*const Until).set.complement());
-                },
                 .opt,
                 => {
                     set.set(0);
@@ -871,9 +790,8 @@ pub fn Parser(comptime Err: type) type {
 
         pub const lowercase = range(&"az".*);
         pub const uppercase = range(&"AZ".*);
-        pub inline fn digit(base: u8) Self {
-            // FIXME: stack use after free
-            return range(&.{ '0', '0' - 1 + base });
+        pub inline fn digit(comptime base: u8) Self {
+            comptime return range(&.{ '0', '0' - 1 + base });
         }
         pub const whitespace = blk: {
             @setEvalBranchQuota(4000);
@@ -885,8 +803,8 @@ pub fn Parser(comptime Err: type) type {
 
 var trace_count: usize = 0;
 fn trace(comptime fmt: []const u8, args: anytype) void {
-    _ = fmt;
-    _ = args;
+    _ = fmt; // autofix
+    _ = args; // autofix
     // std.debug.print("{d: <5} " ++ fmt, .{trace_count} ++ args);
     // trace_count += 1;
 }
