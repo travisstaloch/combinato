@@ -147,10 +147,7 @@ test "string" {
 }
 
 test "counted" {
-    const as = &P.counted(&.{
-        .parser = P.string(&"a"),
-        .options = .{ .min = 2, .max = 4 },
-    });
+    const as = &P.counted(&P.string(&"a"), .{ .min = 2, .max = 4 });
     try expectResult(as, "", error.ParseFailure);
     try expectResult(as, "a", error.ParseFailure);
     try expectResult(as, "aa", "");
@@ -165,6 +162,15 @@ test "many" {
     try expectResult(as, "a", "");
     try expectResult(as, "aa", "");
     try expectResult(as, "aab", "b");
+    try expectResult(as, "b", "b");
+}
+
+test "atMost" {
+    const as = &P.string(&"a").atMost(1);
+    try expectResult(as, "", "");
+    try expectResult(as, "a", "");
+    try expectResult(as, "aa", "a");
+    try expectResult(as, "aab", "ab");
     try expectResult(as, "b", "b");
 }
 
@@ -219,7 +225,7 @@ test "ref" {
 }
 
 test "sepBy/then" {
-    const digits = P.some(P.digit(10)).then(struct {
+    const digits = P.digit(10).some().then(struct {
         fn action(userdata: ?*anyopaque, bytes: []const u8) !void {
             const l: *std.ArrayList(i32) = @ptrCast(@alignCast(userdata));
             try l.append(try std.fmt.parseInt(i32, bytes, 10));
@@ -397,10 +403,10 @@ test "isNullable" {
     try testing.expect(!P.amp(&a).isNullable());
     try testing.expect(!P.not(&a).isNullable());
     try testing.expect(P.opt(&a).isNullable());
-    try testing.expect(P.many(a).isNullable());
-    try testing.expect(!P.some(a).isNullable());
-    try testing.expect(!P.counted(&P.Counted.init(a, .{ .min = 2 })).isNullable());
-    try testing.expect(P.counted(&P.Counted.init(a, .{})).isNullable());
+    try testing.expect(a.many().isNullable());
+    try testing.expect(a.atMost(1).isNullable());
+    try testing.expect(!a.some().isNullable());
+    try testing.expect(!a.counted(.{ .min = 2 }).isNullable());
     try testing.expect(!P.ref(struct {
         fn f() P.Self {
             return ps.a;
@@ -408,17 +414,17 @@ test "isNullable" {
     }.f).isNullable());
     try testing.expect(!P.sepBy1(&.{ a, a }).isNullable());
     try testing.expect(P.sepBy(&.{ a, a }).isNullable());
-    const int = P.some(P.digit(10));
+    const int = P.digit(10).some();
     try testing.expect(!int.isNullable());
 
-    try testing.expect(P.seq(&&.{ P.many(a), P.many(a) }).isNullable());
-    try testing.expect(!P.seq(&&.{ P.many(a), a }).isNullable());
-    try testing.expect(!P.seq(&&.{ a, P.many(a) }).isNullable());
+    try testing.expect(P.seq(&&.{ a.many(), a.many() }).isNullable());
+    try testing.expect(!P.seq(&&.{ a.many(), a }).isNullable());
+    try testing.expect(!P.seq(&&.{ a, a.many() }).isNullable());
     try testing.expect(!P.seq(&&.{ a, a }).isNullable());
 
-    try testing.expect(P.alt(&&.{ P.many(a), P.many(a) }).isNullable());
-    try testing.expect(P.alt(&&.{ P.many(a), a }).isNullable());
-    try testing.expect(P.alt(&&.{ a, P.many(a) }).isNullable());
+    try testing.expect(P.alt(&&.{ a.many(), a.many() }).isNullable());
+    try testing.expect(P.alt(&&.{ a.many(), a }).isNullable());
+    try testing.expect(P.alt(&&.{ a, a.many() }).isNullable());
     try testing.expect(!P.alt(&&.{ a, a }).isNullable());
 
     try testing.expect(P.until(a).isNullable());
@@ -460,10 +466,10 @@ test "first sets" {
     try expectFirstSet(P.amp(&a), "a");
     try expectFirstSet(P.not(&P.not(&a)), "a");
     try expectFirstSet(P.opt(&a), "\x00a");
-    try expectFirstSet(P.many(a), "\x00a");
-    try expectFirstSet(P.some(a), "a");
-    try expectFirstSet(P.counted(&P.Counted.init(a, .{ .min = 2 })), "a");
-    try expectFirstSet(P.counted(&P.Counted.init(a, .{})), "\x00a");
+    try expectFirstSet(a.many(), "\x00a");
+    try expectFirstSet(a.atMost(2), "\x00a");
+    try expectFirstSet(a.some(), "a");
+    try expectFirstSet(a.counted(.{ .min = 2 }), "a");
     try expectFirstSet(P.ref(struct {
         fn f() P.Self {
             return ps.a;
@@ -471,7 +477,7 @@ test "first sets" {
     }.f), "a");
     try expectFirstSet(P.sepBy1(&.{ a, a }), "a");
     try expectFirstSet(P.sepBy(&.{ a, a }), "\x00a");
-    const int = P.some(P.digit(10));
+    const int = P.digit(10).some();
     try expectFirstSet(int, "0123456789");
     try expectFirstSet(P.until(a.not()), "\x00a");
 

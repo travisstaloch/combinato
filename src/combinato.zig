@@ -26,9 +26,8 @@ const Tag = enum {
     amp,
     not,
     opt,
-    counted,
-    many,
     some,
+    many,
     ref,
     sepby1,
     sepby,
@@ -79,6 +78,8 @@ pub fn Parser(comptime Err: type) type {
                 .not,
                 .amp,
                 .then,
+                .some,
+                .many,
                 => assert(T == *const Self),
                 .char => assert(T == *const u8),
                 .range => assert(T == *const [2]u8),
@@ -86,7 +87,7 @@ pub fn Parser(comptime Err: type) type {
                 .charset => assert(T == *const CharSet),
                 .string => assert(T == *const []const u8),
                 .seq, .alt => assert(T == *const []const Self),
-                .counted, .some, .many => assert(T == *const Counted),
+
                 .ref => assert(T == *const fn () Self),
                 .sepby, .sepby1 => assert(T == *const [2]Self),
                 .until => assert(T == *const Until),
@@ -196,7 +197,8 @@ pub fn Parser(comptime Err: type) type {
             };
         }
 
-        /// Consumes one byte if 'f' succeeds.
+        /// Consumes one byte if 'f' succeeds. Creates a CharSet from 'f' at
+        /// comptime.
         pub inline fn func(comptime f: *const fn (u8) bool) Self {
             @setEvalBranchQuota(4000);
             comptime {
@@ -220,7 +222,7 @@ pub fn Parser(comptime Err: type) type {
         }
 
         /// Succeeds if the string passed in starts with 'c'.  Consumes one
-        /// byte on success.
+        /// byte on success.  Creates a CharSet from 'cs' at comptime.
         pub inline fn anychar(comptime cs: *const []const u8) Self {
             @setEvalBranchQuota(4000);
             comptime {
@@ -283,6 +285,7 @@ pub fn Parser(comptime Err: type) type {
         /// Succeeds when all 'parsers' succeed feeding parser N's result
         /// into parser N+1.
         pub fn seq(parsers: *const []const Self) Self {
+            assert(parsers.len != 0);
             return .{
                 .run = struct {
                     fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
@@ -303,6 +306,7 @@ pub fn Parser(comptime Err: type) type {
 
         /// Succeeds if any of 'parsers' succeed returning the first success.
         pub fn alt(parsers: *const []const Self) Self {
+            assert(parsers.len != 0);
             return .{
                 .run = struct {
                     fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
@@ -321,17 +325,17 @@ pub fn Parser(comptime Err: type) type {
         }
 
         pub const Counted = struct {
-            parser: Self,
+            parser: *const Self,
             options: CountedOptions,
-            pub fn init(parser: Self, coptions: CountedOptions) Counted {
+            pub fn init(parser: *const Self, coptions: CountedOptions) Counted {
                 return .{ .parser = parser, .options = coptions };
             }
 
-            fn run(c: *const Counted, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+            fn run(c: Counted, userdata: ?*anyopaque, input: [:0]const u8) Ret {
                 var count: u32 = 0;
                 var in = input;
                 while (count < c.options.max) : (count += 1) {
-                    const mrest = c.parser.run(&c.parser, userdata, in);
+                    const mrest = c.parser.run(c.parser, userdata, in);
                     traceRest("cnt", .{}, mrest);
                     in = mrest catch break;
                 }
@@ -339,48 +343,69 @@ pub fn Parser(comptime Err: type) type {
             }
         };
 
-        /// Repeatedly calls 'parser' up to 'data.max' times and succeeds
-        /// if 'data.parser' succeeds 'data.min' times or more.
-        pub fn counted(data: *const Counted) Self {
+        /// Repeatedly calls 'parser' up to 'options.max' times and succeeds
+        /// if 'parser' succeeds 'options.min' times or more.
+        ///
+        /// 'min' must be greater than 0.  For 'min' = 0 with 'max', use
+        /// 'atMost()'.
+        pub fn counted(parser: *const Self, comptime options: CountedOptions) Self {
+            assert(options.min != 0);
             return .{
                 .run = struct {
                     fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
-                        const c = self.dataAs(*const Counted);
+                        const p = self.dataAs(*const Self);
+                        const c = Counted.init(p, options);
                         return c.run(userdata, input);
                     }
                 }.run,
-                .data = data,
-                .tag = .counted,
+                .data = parser,
+                .tag = .some,
             };
         }
 
-        /// Always succeeds, repeatedly calling 'parser' until it fails.
-        pub inline fn many(parser: Self) Self {
-            // FIXME: stack use after free
+        /// Always succeeds.  Calls 'parser' until it fails.
+        pub fn many(parser: *const Self) Self {
             return .{
                 .run = struct {
                     fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
-                        const c = self.dataAs(*const Counted);
+                        const p = self.dataAs(*const Self);
+                        const c = Counted.init(p, .{});
                         return c.run(userdata, input);
                     }
                 }.run,
-                .data = &Counted.init(parser, .{}),
+                .data = parser,
                 .tag = .many,
             };
         }
 
-        /// Succeeds when 'parser' succeeds once.  Repeatedly calls 'parser'
-        /// until it fails.
-        pub inline fn some(parser: Self) Self {
-            // FIXME: stack use after free
+        /// Always succeeds.  Calls 'parser' at most 'max' times or until it
+        /// fails.  'max' must be greater than 0.
+        pub fn atMost(parser: *const Self, comptime max: u32) Self {
+            assert(max != 0);
             return .{
                 .run = struct {
                     fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
-                        const c = self.dataAs(*const Counted);
+                        const p = self.dataAs(*const Self);
+                        const c = Counted.init(p, .{ .max = max });
                         return c.run(userdata, input);
                     }
                 }.run,
-                .data = &Counted.init(parser, .{ .min = 1 }),
+                .data = parser,
+                .tag = .many,
+            };
+        }
+
+        /// Succeeds when 'parser' succeeds once.  Calls 'parser' until it fails.
+        pub fn some(parser: *const Self) Self {
+            return .{
+                .run = struct {
+                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                        const p = self.dataAs(*const Self);
+                        const c = Counted.init(p, .{ .min = 1 });
+                        return c.run(userdata, input);
+                    }
+                }.run,
+                .data = parser,
                 .tag = .some,
             };
         }
@@ -577,7 +602,7 @@ pub fn Parser(comptime Err: type) type {
         ///    try expectResult(&Scope.digits, "123", "");
         ///}
         /// ```
-        pub inline fn ref(f: *const fn () Self) Self {
+        pub fn ref(f: *const fn () Self) Self {
             return .{
                 .run = struct {
                     fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
@@ -600,7 +625,7 @@ pub fn Parser(comptime Err: type) type {
                     fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
                         const ps = self.dataAs(*const [2]Self);
                         const parser, const sep = ps.*;
-                        const p = seq(&&.{ parser, many(seq(&&.{ sep, parser })) });
+                        const p = seq(&&.{ parser, seq(&&.{ sep, parser }).many() });
                         return p.run(&p, userdata, input);
                     }
                 }.run,
@@ -704,9 +729,9 @@ pub fn Parser(comptime Err: type) type {
                 .eos,
                 .rest,
                 .opt,
-                .many,
                 .sepby,
                 .until,
+                .many,
                 => return true,
                 .not,
                 .amp,
@@ -717,12 +742,9 @@ pub fn Parser(comptime Err: type) type {
                 .string,
                 .enumeration,
                 => return false,
-                .counted => {
-                    const c = p.dataAs(*const Counted);
-                    return c.options.min == 0 or c.parser.isNullable();
-                },
                 .some => {
-                    return p.dataAs(*const Counted).parser.isNullable();
+                    const parser = p.dataAs(*const Self);
+                    return parser.isNullable();
                 },
                 .ref => {
                     return p.dataAs(*const fn () Self)().isNullable();
@@ -798,10 +820,14 @@ pub fn Parser(comptime Err: type) type {
                     const sp = p.dataAs(*const Self);
                     sp.firstSet(set);
                 },
-                .many, .some, .counted => {
-                    const c = p.dataAs(*const Counted);
-                    if (c.options.min == 0) set.set(0);
-                    c.parser.firstSet(set);
+                .many => {
+                    const parser = p.dataAs(*const Self);
+                    set.set(0);
+                    parser.firstSet(set);
+                },
+                .some => {
+                    const parser = p.dataAs(*const Self);
+                    parser.firstSet(set);
                 },
                 .ref => {
                     p.dataAs(*const fn () Self)().firstSet(set);
