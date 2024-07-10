@@ -4,31 +4,32 @@ test {
 
 const P = combinato.Parser(mem.Allocator.Error ||
     std.fmt.ParseIntError ||
-    std.io.FixedBufferStream([]u8).WriteError);
+    std.io.FixedBufferStream([]u8).WriteError, .{});
 
 fn expectResult(
     parser: *const P,
     input: [:0]const u8,
     expected_rest: anyerror![:0]const u8,
 ) !void {
-    try expectResultImpl(parser, input, expected_rest, null);
+    try expectResultImpl(P, parser, input, expected_rest, null);
 }
 
 fn expectResultWithData(
-    parser: *const P,
+    comptime Q: type,
+    parser: *const Q,
     input: [:0]const u8,
     expected_rest: anyerror![:0]const u8,
-    userdata: ?*anyopaque,
+    userdata: Q.UserData,
 ) !void {
-    try expectResultImpl(parser, input, expected_rest, userdata);
+    try expectResultImpl(Q, parser, input, expected_rest, userdata);
 }
 
 fn expectResultImpl(
-    parser: *const P,
+    comptime Q: type,
+    parser: *const Q,
     input: [:0]const u8,
-    // expected_written: []const u8,
     expected_result: anyerror![:0]const u8,
-    userdata: ?*anyopaque,
+    userdata: Q.UserData,
 ) !void {
     const result = parser.run(parser, userdata, input);
     if (expected_result) |er| {
@@ -239,95 +240,94 @@ test "sepBy/then" {
     const listp = &P.seq(&&.{ P.char(&'['), ws, items, ws, P.char(&']') });
     var list = std.ArrayList(i32).init(testing.allocator);
     defer list.deinit();
-    try expectResultWithData(listp, "[]", "", &list);
+    try expectResultWithData(P, listp, "[]", "", &list);
     try testing.expectEqualSlices(i32, &.{}, list.items);
     list.clearRetainingCapacity();
-    try expectResultWithData(listp, "[ ]", "", &list);
+    try expectResultWithData(P, listp, "[ ]", "", &list);
     try testing.expectEqualSlices(i32, &.{}, list.items);
     list.clearRetainingCapacity();
-    try expectResultWithData(listp, "[ 1 ]", "", &list);
+    try expectResultWithData(P, listp, "[ 1 ]", "", &list);
     try testing.expectEqualSlices(i32, &.{1}, list.items);
     list.clearRetainingCapacity();
-    try expectResultWithData(listp, "[1 ]", "", &list);
+    try expectResultWithData(P, listp, "[1 ]", "", &list);
     try testing.expectEqualSlices(i32, &.{1}, list.items);
     list.clearRetainingCapacity();
-    try expectResultWithData(listp, "[ 1]", "", &list);
+    try expectResultWithData(P, listp, "[ 1]", "", &list);
     try testing.expectEqualSlices(i32, &.{1}, list.items);
     list.clearRetainingCapacity();
-    try expectResultWithData(listp, "[1,]", error.ParseFailure, &list);
+    try expectResultWithData(P, listp, "[1,]", error.ParseFailure, &list);
     try testing.expectEqualSlices(i32, &.{1}, list.items);
     list.clearRetainingCapacity();
-    try expectResultWithData(listp, "[ 1 , 2 ]", "", &list);
+    try expectResultWithData(P, listp, "[ 1 , 2 ]", "", &list);
     try testing.expectEqualSlices(i32, &.{ 1, 2 }, list.items);
     list.clearRetainingCapacity();
-    try expectResultWithData(listp, "[ 1 , 2, ]", error.ParseFailure, &list);
+    try expectResultWithData(P, listp, "[ 1 , 2, ]", error.ParseFailure, &list);
     try testing.expectEqualSlices(i32, &.{ 1, 2 }, list.items);
 }
 
 test "then" {
+    const Q = combinato.Parser(std.fmt.ParseIntError, .{ .UserData = *i32 });
+
     // -- then --
     const onInt = struct {
-        fn action(userdata: ?*anyopaque, _: []const u8) !void {
-            const i: *i32 = @ptrCast(@alignCast(userdata orelse
-                return error.MissingUserdata));
+        fn action(i: *i32, _: []const u8) !void {
             i.* += 1;
         }
     }.action;
 
-    const int10 = P.digit(10).some();
+    const int10 = Q.digit(10).some();
     const map_int = int10.then(onInt);
-    const map_bin = P.digit(2).some().then(onInt);
-    try testing.expectError(error.MissingUserdata, map_int.run(&map_int, null, "123"));
+    const map_bin = Q.digit(2).some().then(onInt);
     var call_count: i32 = 0;
-    try expectResultWithData(&map_int, "123", "", &call_count);
-    try expectResultWithData(&map_bin, "101", "", &call_count);
+    try expectResultWithData(Q, &map_int, "123", "", &call_count);
+    try expectResultWithData(Q, &map_bin, "101", "", &call_count);
     try testing.expectEqual(2, call_count);
     call_count = 0;
     {
-        const map_int2 = int10.some().then(P.Action.integer(u8, .{}));
+        const map_int2 = P.digit(10).some().then(P.Action.integer(u8, .{}));
         var x: u8 = undefined;
-        try expectResultWithData(&map_int2, "123", "", &x);
+        try expectResultWithData(P, &map_int2, "123", "", &x);
         try testing.expectEqual(123, x);
     }
     {
         const E = enum { foo, bar };
         const map_enum = P.lowercase.some().then(P.Action.enumeration(E));
         var x: E = undefined;
-        try expectResultWithData(&map_enum, "bar  ", "  ", &x);
+        try expectResultWithData(P, &map_enum, "bar  ", "  ", &x);
         try testing.expectEqual(.bar, x);
     }
     {
-        const map_float = P.alt(&&.{ int10, P.char(&'.') })
+        const map_float = P.alt(&&.{ P.digit(10).some(), P.char(&'.') })
             .some()
             .then(P.Action.float(f32));
         var x: f32 = undefined;
-        try expectResultWithData(&map_float, "123.45", "", &x);
+        try expectResultWithData(P, &map_float, "123.45", "", &x);
         try testing.expectEqual(123.45, x);
     }
     {
         const map_bool = P.lowercase.some().then(P.Action.boolean);
         var x: bool = true;
-        try expectResultWithData(&map_bool, "false ", " ", &x);
+        try expectResultWithData(P, &map_bool, "false ", " ", &x);
         try testing.expectEqual(false, x);
     }
 
-    const ws = P.char(&' ');
-    const pt_seq = P.seq(&&.{ map_int, ws, map_int });
-    try expectResultWithData(&pt_seq, "1 2", "", &call_count);
+    const ws = Q.char(&' ');
+    const pt_seq = Q.seq(&&.{ map_int, ws, map_int });
+    try expectResultWithData(Q, &pt_seq, "1 2", "", &call_count);
     try testing.expectEqual(2, call_count);
     call_count = 0;
 
-    const lowers = P.lowercase.some().then(onInt);
-    const boolp = P.alt(&&.{ P.string(&"false"), P.string(&"true") }).then(onInt);
-    const misc_seq = P.seq(&&.{ lowers, ws, lowers, ws, map_int, ws, map_int, ws, boolp });
-    try expectResultWithData(&misc_seq, "a b 0 0 true", "", &call_count);
+    const lowers = Q.lowercase.some().then(onInt);
+    const boolp = Q.alt(&&.{ Q.string(&"false"), Q.string(&"true") }).then(onInt);
+    const misc_seq = Q.seq(&&.{ lowers, ws, lowers, ws, map_int, ws, map_int, ws, boolp });
+    try expectResultWithData(Q, &misc_seq, "a b 0 0 true", "", &call_count);
     try testing.expectEqual(5, call_count);
 }
 
 test "bytes to hex" {
     var list = std.ArrayList(u8).init(testing.allocator);
     defer list.deinit();
-    try expectResultWithData(&P.any.then(struct {
+    try expectResultWithData(P, &P.any.then(struct {
         fn action(userdata: ?*anyopaque, bytes: []const u8) !void {
             const l: *std.ArrayList(u8) = @ptrCast(@alignCast(userdata));
             for (bytes) |c| {

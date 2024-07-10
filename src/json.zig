@@ -156,40 +156,33 @@ const json = struct {
     const sign = P.anychar(&"-+").opt();
 
     // -- callbacks --
-    fn onObject(userdata: ?*anyopaque, _: []const u8) Error!void {
-        const ctx: *ParseCtx = @ptrCast(@alignCast(userdata));
+    fn onObject(ctx: *ParseCtx, _: []const u8) Error!void {
         trace("-- beginObject\n", .{});
         try ctx.push(.{ .object = std.json.ObjectMap.init(ctx.arena.allocator()) });
     }
-    fn onObjectKey(userdata: ?*anyopaque, bytes: []const u8) Error!void {
-        const ctx: *ParseCtx = @ptrCast(@alignCast(userdata));
+    fn onObjectKey(ctx: *ParseCtx, bytes: []const u8) Error!void {
         trace("-- onObjectKey\n{}", .{ctx});
         try ctx.push(.{ .string = try ctx.intern(bytes[1 .. bytes.len - 1]) });
     }
-    fn onObjectValue(userdata: ?*anyopaque, _: []const u8) Error!void {
-        const ctx: *ParseCtx = @ptrCast(@alignCast(userdata));
+    fn onObjectValue(ctx: *ParseCtx, _: []const u8) Error!void {
         trace("-- onObjectValue\n{}", .{ctx});
         const key = ctx.stack.pop().string;
         try ctx.stack.items[ctx.stack.items.len - 1].object.put(key, ctx.root.?);
         ctx.pop();
     }
-    fn onArray(userdata: ?*anyopaque, _: []const u8) Error!void {
-        const ctx: *ParseCtx = @ptrCast(@alignCast(userdata));
+    fn onArray(ctx: *ParseCtx, _: []const u8) Error!void {
         trace("-- onArray\n", .{});
         try ctx.push(.{ .array = std.json.Array.init(ctx.arena.allocator()) });
     }
-    fn onArrayElement(userdata: ?*anyopaque, _: []const u8) Error!void {
-        const ctx: *ParseCtx = @ptrCast(@alignCast(userdata));
+    fn onArrayElement(ctx: *ParseCtx, _: []const u8) Error!void {
         trace("-- onArrayElement\n{}", .{ctx});
         try ctx.stack.items[ctx.stack.items.len - 1].array.append(ctx.root.?);
         ctx.pop();
     }
-    fn onFraction(userdata: ?*anyopaque, _: []const u8) Error!void {
-        const ctx: *ParseCtx = @ptrCast(@alignCast(userdata));
+    fn onFraction(ctx: *ParseCtx, _: []const u8) Error!void {
         ctx.has_fraction = true;
     }
-    fn onNumber(userdata: ?*anyopaque, bytes: []const u8) Error!void {
-        const ctx: *ParseCtx = @ptrCast(@alignCast(userdata));
+    fn onNumber(ctx: *ParseCtx, bytes: []const u8) Error!void {
         trace("-- num {s}\n{}", .{ bytes, ctx });
         defer ctx.has_fraction = false;
         if (ctx.has_fraction) {
@@ -204,15 +197,13 @@ const json = struct {
                 .{ .number_string = bytes });
         }
     }
-    fn onString(userdata: ?*anyopaque, bytes: []const u8) Error!void {
-        const ctx: *ParseCtx = @ptrCast(@alignCast(userdata));
+    fn onString(ctx: *ParseCtx, bytes: []const u8) Error!void {
         trace("-- str {s}\n", .{bytes});
         try ctx.push(.{ .string = try ctx.intern(bytes[1 .. bytes.len - 1]) });
     }
-    fn onConstant(comptime v: Value) fn (?*anyopaque, _: []const u8) Error!void {
+    fn onConstant(comptime v: Value) fn (*ParseCtx, _: []const u8) Error!void {
         return struct {
-            fn func(userdata: ?*anyopaque, _: []const u8) Error!void {
-                const ctx: *ParseCtx = @ptrCast(@alignCast(userdata));
+            fn func(ctx: *ParseCtx, _: []const u8) Error!void {
                 trace("-- {s}\n", .{@tagName(v)});
                 try ctx.push(v);
             }
@@ -288,7 +279,7 @@ fn trace(comptime fmt: []const u8, args: anytype) void {
 }
 
 const combinato = @import("combinato");
-const P = combinato.Parser(json.Error);
+const P = combinato.Parser(json.Error, .{ .UserData = *ParseCtx });
 const std = @import("std");
 const mem = std.mem;
 const testing = std.testing;

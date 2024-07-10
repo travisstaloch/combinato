@@ -54,11 +54,15 @@ pub const CharSetFmt = struct {
     }
 };
 
+pub const ParserOptions = struct {
+    UserData: type = ?*anyopaque,
+};
+
 /// Parser combinators which pass around user defined data.
 ///
 /// Some parser methods (func, anychar) have comptime semantics to avoid
 /// returning dangling pointers.
-pub fn Parser(comptime Err: type) type {
+pub fn Parser(comptime Err: type, comptime parser_options: ParserOptions) type {
     return struct {
         run: *const ParseFn,
         data: *const anyopaque,
@@ -66,7 +70,8 @@ pub fn Parser(comptime Err: type) type {
 
         pub const Error = Err || ParseError;
         pub const Ret = Error![:0]const u8;
-        pub const ParseFn = fn (self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret;
+        pub const ParseFn = fn (self: *const Self, userdata: UserData, input: [:0]const u8) Ret;
+        pub const UserData = parser_options.UserData;
 
         pub const Self = @This();
 
@@ -95,7 +100,7 @@ pub fn Parser(comptime Err: type) type {
         /// Always succeeds. Consumes nothing.
         pub const epsilon: Self = .{
             .run = struct {
-                fn run(_: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
+                fn run(_: *const Self, _: UserData, input: [:0]const u8) Ret {
                     return input;
                 }
             }.run,
@@ -106,7 +111,7 @@ pub fn Parser(comptime Err: type) type {
         /// Succeeds on when input length is zero. Consumes nothing.
         pub const eos: Self = .{
             .run = struct {
-                fn run(_: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
+                fn run(_: *const Self, _: UserData, input: [:0]const u8) Ret {
                     return if (input.len == 0) input else error.ParseFailure;
                 }
             }.run,
@@ -117,7 +122,7 @@ pub fn Parser(comptime Err: type) type {
         /// Always succeeds.  Consumes all input.
         pub const rest: Self = .{
             .run = struct {
-                fn run(_: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
+                fn run(_: *const Self, _: UserData, input: [:0]const u8) Ret {
                     return input[input.len..];
                 }
             }.run,
@@ -128,7 +133,7 @@ pub fn Parser(comptime Err: type) type {
         /// Consumes one byte if available.
         pub const any: Self = .{
             .run = struct {
-                fn run(_: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
+                fn run(_: *const Self, _: UserData, input: [:0]const u8) Ret {
                     if (input.len == 0) return error.ParseFailure;
                     return input[1..];
                 }
@@ -140,7 +145,7 @@ pub fn Parser(comptime Err: type) type {
         /// Consumes one codepoint if available.  Fails on invalid utf8.
         pub const codepoint: Self = .{
             .run = struct {
-                fn run(_: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
+                fn run(_: *const Self, _: UserData, input: [:0]const u8) Ret {
                     const cp_len = std.unicode.utf8ByteSequenceLength(input[0]) catch
                         return error.ParseFailure;
                     trace("cp_len {}\n", .{cp_len});
@@ -159,7 +164,7 @@ pub fn Parser(comptime Err: type) type {
         pub fn char(c: *const u8) Self {
             return .{
                 .run = struct {
-                    fn run(self: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, _: UserData, input: [:0]const u8) Ret {
                         const ch = self.dataAs(*const u8).*;
                         return if (ch == input[0])
                             input[1..]
@@ -179,7 +184,7 @@ pub fn Parser(comptime Err: type) type {
             assert(rg[0] < rg[1]);
             return .{
                 .run = struct {
-                    fn run(self: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, _: UserData, input: [:0]const u8) Ret {
                         const c = input[0];
                         const rgp = self.dataAs(*const [2]u8);
                         const start, const end = rgp.*;
@@ -204,7 +209,7 @@ pub fn Parser(comptime Err: type) type {
                 const final = set;
                 return .{
                     .run = struct {
-                        fn run(self: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
+                        fn run(self: *const Self, _: UserData, input: [:0]const u8) Ret {
                             const c = input[0];
                             return if (self.dataAs(*const CharSet).isSet(c))
                                 input[1..]
@@ -228,7 +233,7 @@ pub fn Parser(comptime Err: type) type {
                 const final = set;
                 return .{
                     .run = struct {
-                        fn run(self: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
+                        fn run(self: *const Self, _: UserData, input: [:0]const u8) Ret {
                             const cset = self.dataAs(*const CharSet).*;
                             return if (cset.isSet(input[0]))
                                 input[1..]
@@ -247,7 +252,7 @@ pub fn Parser(comptime Err: type) type {
         pub fn charset(set: *const CharSet) Self {
             return .{
                 .run = struct {
-                    fn run(self: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, _: UserData, input: [:0]const u8) Ret {
                         const cset = self.dataAs(*const CharSet).*;
                         return if (cset.isSet(input[0]))
                             input[1..]
@@ -266,7 +271,7 @@ pub fn Parser(comptime Err: type) type {
             assert(s.len != 0);
             return .{
                 .run = struct {
-                    fn run(self: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, _: UserData, input: [:0]const u8) Ret {
                         const str = self.dataAs(*const []const u8).*;
                         return if (mem.startsWith(u8, input, str))
                             input[str.len..]
@@ -285,7 +290,7 @@ pub fn Parser(comptime Err: type) type {
             assert(parsers.len != 0);
             return .{
                 .run = struct {
-                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, userdata: UserData, input: [:0]const u8) Ret {
                         var in = input;
                         const ps = self.dataAs(*const []const Self);
                         for (ps.*) |*p| {
@@ -306,7 +311,7 @@ pub fn Parser(comptime Err: type) type {
             assert(parsers.len != 0);
             return .{
                 .run = struct {
-                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, userdata: UserData, input: [:0]const u8) Ret {
                         const ps = self.dataAs(*const []const Self);
                         for (ps.*) |*p| {
                             const mrest = p.run(p, userdata, input);
@@ -328,7 +333,7 @@ pub fn Parser(comptime Err: type) type {
                 return .{ .parser = parser, .options = coptions };
             }
 
-            fn run(c: Counted, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+            fn run(c: Counted, userdata: UserData, input: [:0]const u8) Ret {
                 var count: u32 = 0;
                 var in = input;
                 while (count < c.options.max) : (count += 1) {
@@ -349,7 +354,7 @@ pub fn Parser(comptime Err: type) type {
             assert(options.min != 0);
             return .{
                 .run = struct {
-                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, userdata: UserData, input: [:0]const u8) Ret {
                         const p = self.dataAs(*const Self);
                         const c = Counted.init(p, options);
                         return c.run(userdata, input);
@@ -364,7 +369,7 @@ pub fn Parser(comptime Err: type) type {
         pub fn many(parser: *const Self) Self {
             return .{
                 .run = struct {
-                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, userdata: UserData, input: [:0]const u8) Ret {
                         const p = self.dataAs(*const Self);
                         const c = Counted.init(p, .{});
                         return c.run(userdata, input);
@@ -381,7 +386,7 @@ pub fn Parser(comptime Err: type) type {
             assert(max != 0);
             return .{
                 .run = struct {
-                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, userdata: UserData, input: [:0]const u8) Ret {
                         const p = self.dataAs(*const Self);
                         const c = Counted.init(p, .{ .max = max });
                         return c.run(userdata, input);
@@ -396,7 +401,7 @@ pub fn Parser(comptime Err: type) type {
         pub fn some(parser: *const Self) Self {
             return .{
                 .run = struct {
-                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, userdata: UserData, input: [:0]const u8) Ret {
                         const p = self.dataAs(*const Self);
                         const c = Counted.init(p, .{ .min = 1 });
                         return c.run(userdata, input);
@@ -412,7 +417,7 @@ pub fn Parser(comptime Err: type) type {
         pub fn opt(parser: *const Self) Self {
             return .{
                 .run = struct {
-                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, userdata: UserData, input: [:0]const u8) Ret {
                         const p = self.dataAs(*const Self);
                         return p.run(p, userdata, input) catch input;
                     }
@@ -427,7 +432,7 @@ pub fn Parser(comptime Err: type) type {
         pub fn not(parser: *const Self) Self {
             return .{
                 .run = struct {
-                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, userdata: UserData, input: [:0]const u8) Ret {
                         const p = self.dataAs(*const Self);
                         return if (p.run(p, userdata, input)) |_|
                             error.ParseFailure
@@ -445,7 +450,7 @@ pub fn Parser(comptime Err: type) type {
         pub fn amp(parser: *const Self) Self {
             return .{
                 .run = struct {
-                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, userdata: UserData, input: [:0]const u8) Ret {
                         const p = self.dataAs(*const Self);
                         _ = try p.run(p, userdata, input);
                         return input;
@@ -459,7 +464,7 @@ pub fn Parser(comptime Err: type) type {
         /// Runs parser and captures output. returns 'captured' along with 'rest'.
         pub fn runAndCapture(
             p: *const Self,
-            userdata: ?*anyopaque,
+            userdata: UserData,
             input: [:0]const u8,
         ) !struct { captured: []const u8, rest: [:0]const u8 } {
             const r = try p.run(p, userdata, input);
@@ -473,11 +478,11 @@ pub fn Parser(comptime Err: type) type {
             pub const Fn = @TypeOf(nop);
 
             /// nop.  does nothing.
-            pub fn nop(_: ?*anyopaque, _: []const u8) Error!void {}
+            pub fn nop(_: UserData, _: []const u8) Error!void {}
 
             pub fn integer(comptime T: type, options: struct { base: u8 = 0 }) Fn {
                 return struct {
-                    pub fn action(userdata: ?*anyopaque, bytes: []const u8) Error!void {
+                    pub fn action(userdata: UserData, bytes: []const u8) Error!void {
                         const int = std.fmt.parseInt(T, bytes, options.base) catch
                             return error.ParseFailure;
                         trace("integer() {}\n", .{int});
@@ -490,7 +495,7 @@ pub fn Parser(comptime Err: type) type {
 
             pub fn float(comptime F: type) Fn {
                 return struct {
-                    pub fn action(userdata: ?*anyopaque, bytes: []const u8) Error!void {
+                    pub fn action(userdata: UserData, bytes: []const u8) Error!void {
                         const e = std.fmt.parseFloat(F, bytes) catch
                             return error.ParseFailure;
                         trace("float() {}\n", .{e});
@@ -503,7 +508,7 @@ pub fn Parser(comptime Err: type) type {
 
             pub fn enumeration(comptime E: type) Fn {
                 return struct {
-                    pub fn action(userdata: ?*anyopaque, bytes: []const u8) Error!void {
+                    pub fn action(userdata: UserData, bytes: []const u8) Error!void {
                         const e = std.meta.stringToEnum(E, bytes) orelse
                             return error.ParseFailure;
                         trace("enumeration() {}\n", .{e});
@@ -514,7 +519,7 @@ pub fn Parser(comptime Err: type) type {
                 }.action;
             }
 
-            pub fn boolean(userdata: ?*anyopaque, bytes: []const u8) Error!void {
+            pub fn boolean(userdata: UserData, bytes: []const u8) Error!void {
                 const E = enum { false, true };
                 const e = std.meta.stringToEnum(E, bytes) orelse
                     return error.ParseFailure;
@@ -526,7 +531,7 @@ pub fn Parser(comptime Err: type) type {
 
             pub fn constant(comptime value: anytype) Fn {
                 return struct {
-                    pub fn action(userdata: ?*anyopaque, bytes: []const u8) Error!void {
+                    pub fn action(userdata: UserData, bytes: []const u8) Error!void {
                         trace("constant() {s} {}\n", .{ bytes, value });
                         const ud: *@TypeOf(value) = @ptrCast(@alignCast(userdata orelse
                             return error.MissingUserdata));
@@ -540,7 +545,7 @@ pub fn Parser(comptime Err: type) type {
         pub fn then(parser: *const Self, comptime action: *const Action.Fn) Self {
             return .{
                 .run = struct {
-                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, userdata: UserData, input: [:0]const u8) Ret {
                         const r = try runAndCapture(self.dataAs(*const Self), userdata, input);
                         // trace("map captured {any} rest {s}\n", .{ w.captured, w.rest });
                         try action(userdata, r.captured);
@@ -561,7 +566,7 @@ pub fn Parser(comptime Err: type) type {
                 .run = struct {
                     const info = @typeInfo(T).Enum;
 
-                    fn run(_: *const Self, _: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(_: *const Self, _: UserData, input: [:0]const u8) Ret {
                         // std.debug.print("fs {any} input '{s}'\n", .{ fs, input });
                         const smap = comptime blk: {
                             const EnumKV = struct { []const u8, T };
@@ -602,7 +607,7 @@ pub fn Parser(comptime Err: type) type {
         pub fn ref(f: *const fn () Self) Self {
             return .{
                 .run = struct {
-                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, userdata: UserData, input: [:0]const u8) Ret {
                         const fun = self.dataAs(*const fn () Self);
                         const p = fun();
                         return p.run(&p, userdata, input);
@@ -619,7 +624,7 @@ pub fn Parser(comptime Err: type) type {
         pub fn sepBy1(parsers: *const [2]Self) Self {
             return .{
                 .run = struct {
-                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, userdata: UserData, input: [:0]const u8) Ret {
                         const ps = self.dataAs(*const [2]Self);
                         const parser, const sep = ps.*;
                         const p = seq(&&.{ parser, seq(&&.{ sep, parser }).many() });
@@ -636,7 +641,7 @@ pub fn Parser(comptime Err: type) type {
         pub fn sepBy(parser_and_sepator: *const [2]Self) Self {
             return .{
                 .run = struct {
-                    fn run(self: *const Self, userdata: ?*anyopaque, input: [:0]const u8) Ret {
+                    fn run(self: *const Self, userdata: UserData, input: [:0]const u8) Ret {
                         const ps = self.dataAs(*const [2]Self);
                         const p = &sepBy1(ps).opt();
                         return p.run(p, userdata, input);
