@@ -13,6 +13,7 @@ const Tag = enum {
     epsilon,
     eos,
     rest,
+    any,
 
     char,
     range,
@@ -77,7 +78,7 @@ pub fn Parser(comptime Err: type, comptime parser_options: ParserOptions) type {
 
         fn dataAs(p: Self, comptime T: type) T {
             switch (p.tag) {
-                .epsilon, .eos, .rest, .enumeration => unreachable,
+                .epsilon, .eos, .rest, .enumeration, .any => unreachable,
                 .opt,
                 .not,
                 .amp,
@@ -130,6 +131,17 @@ pub fn Parser(comptime Err: type, comptime parser_options: ParserOptions) type {
             .tag = .rest,
         };
 
+        /// Always fails.  Consumes no input.
+        pub const err: Self = .{
+            .run = struct {
+                fn run(_: *const Self, _: UserData, _: [:0]const u8) Ret {
+                    return error.ParseFailure;
+                }
+            }.run,
+            .data = undefined,
+            .tag = .epsilon,
+        };
+
         /// Consumes one byte if available.
         pub const any: Self = .{
             .run = struct {
@@ -139,7 +151,7 @@ pub fn Parser(comptime Err: type, comptime parser_options: ParserOptions) type {
                 }
             }.run,
             .data = undefined,
-            .tag = .rest,
+            .tag = .any,
         };
 
         /// Consumes one codepoint if available.  Fails on invalid utf8.
@@ -156,7 +168,7 @@ pub fn Parser(comptime Err: type, comptime parser_options: ParserOptions) type {
                 }
             }.run,
             .data = undefined,
-            .tag = .rest,
+            .tag = .any,
         };
 
         /// Succeeds if the string passed in starts with 'c'.  Consumes one
@@ -669,6 +681,7 @@ pub fn Parser(comptime Err: type, comptime parser_options: ParserOptions) type {
                 .func,
                 .string,
                 .enumeration,
+                .any,
                 => return false,
                 .some => {
                     const parser = p.dataAs(*const Self);
@@ -719,6 +732,7 @@ pub fn Parser(comptime Err: type, comptime parser_options: ParserOptions) type {
                     p.dataAs(*const Self).firstSet(set);
                 },
                 .char => set.set(p.dataAs(*const u8).*),
+                .any => set.setRangeValue(.{ .start = 1, .end = 256 }, true),
                 .range => {
                     const rg = p.dataAs(*const [2]u8).*;
                     set.setRangeValue(.{

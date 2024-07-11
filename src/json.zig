@@ -79,9 +79,10 @@ const ParseCtx = struct {
     }
 };
 
-const json = struct {
-    pub const Error = combinato.ParseError || mem.Allocator.Error;
+const Error = mem.Allocator.Error;
+const P = combinato.Parser(Error, .{ .UserData = *ParseCtx });
 
+const json = struct {
     // -- parsers -- following https://www.json.org/json-en.html
     const element = P.seq(&&.{ ws, P.ref(valueRef), ws });
     fn valueRef() P {
@@ -279,7 +280,6 @@ fn trace(comptime fmt: []const u8, args: anytype) void {
 }
 
 const combinato = @import("combinato");
-const P = combinato.Parser(json.Error, .{ .UserData = *ParseCtx });
 const std = @import("std");
 const mem = std.mem;
 const testing = std.testing;
