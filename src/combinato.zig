@@ -56,7 +56,10 @@ pub const CharSetFmt = struct {
 };
 
 pub const ParserOptions = struct {
+    /// the type of UserData.  default ?*anyopaque.
     UserData: type = ?*anyopaque,
+    /// enable trace logging.  default false.
+    trace: bool = false,
 };
 
 /// Parser combinators which pass around user defined data.
@@ -817,25 +820,25 @@ pub fn Parser(comptime Err: type, comptime parser_options: ParserOptions) type {
             break :blk func(&std.ascii.isWhitespace);
         };
         pub const many_whitespace = whitespace.many();
+
+        var trace_count: usize = 0;
+        fn trace(comptime fmt: []const u8, args: anytype) void {
+            if (parser_options.trace) {
+                std.debug.print("{d: <5} " ++ fmt, .{trace_count} ++ args);
+                trace_count += 1;
+            }
+        }
+
+        fn traceRest(comptime fmt: []const u8, args: anytype, mrest: anyerror![:0]const u8) void {
+            const f = comptime mem.trimRight(u8, fmt, "\n");
+            if (mrest) |rest_| {
+                const len = @min(15, rest_.len);
+                trace(f ++ " '{}'\n", args ++ .{std.zig.fmtEscapes(rest_[0..len])});
+            } else |e| {
+                trace(f ++ " '{s}'\n", args ++ .{@errorName(e)});
+            }
+        }
     };
-}
-
-var trace_count: usize = 0;
-fn trace(comptime fmt: []const u8, args: anytype) void {
-    _ = fmt; // autofix
-    _ = args; // autofix
-    // std.debug.print("{d: <5} " ++ fmt, .{trace_count} ++ args);
-    // trace_count += 1;
-}
-
-fn traceRest(comptime fmt: []const u8, args: anytype, mrest: anyerror![:0]const u8) void {
-    const f = comptime mem.trimRight(u8, fmt, "\n");
-    if (mrest) |rest| {
-        const len = @min(15, rest.len);
-        trace(f ++ " '{}'\n", args ++ .{std.zig.fmtEscapes(rest[0..len])});
-    } else |e| {
-        trace(f ++ " '{s}'\n", args ++ .{@errorName(e)});
-    }
 }
 
 const std = @import("std");
