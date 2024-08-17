@@ -33,6 +33,7 @@ const Tag = enum {
     sepby1,
     sepby,
     then,
+    otherwise,
 };
 
 pub const ParseError = error{ ParseFailure, MissingUserdata };
@@ -86,6 +87,7 @@ pub fn Parser(comptime Err: type, comptime parser_options: ParserOptions) type {
                 .not,
                 .amp,
                 .then,
+                .otherwise,
                 .some,
                 .many,
                 => assert(T == *const Self),
@@ -572,6 +574,22 @@ pub fn Parser(comptime Err: type, comptime parser_options: ParserOptions) type {
             };
         }
 
+        /// Runs 'parser' and on failure calls 'action' with userdata and input.
+        pub fn otherwise(parser: *const Self, comptime action: *const Action.Fn) Self {
+            return .{
+                .run = struct {
+                    fn run(self: *const Self, userdata: UserData, input: [:0]const u8) Ret {
+                        const p = self.dataAs(*const Self);
+                        if (p.run(p, userdata, input)) |r| return r else |_| {}
+                        try action(userdata, input);
+                        return error.ParseFailure;
+                    }
+                }.run,
+                .data = parser,
+                .tag = .otherwise,
+            };
+        }
+
         /// Succeeds when input starts with an enum tag name.  When some tags
         /// have a shared prefix and multiple matches are possible, such as with
         /// tags 'foo' and 'foobar', longer matches have precedence.  So given
@@ -693,7 +711,7 @@ pub fn Parser(comptime Err: type, comptime parser_options: ParserOptions) type {
                 .ref => {
                     return p.dataAs(*const fn () Self)().isNullable();
                 },
-                .then => {
+                .then, .otherwise => {
                     return p.dataAs(*const Self).isNullable();
                 },
                 .sepby1 => {
@@ -773,7 +791,7 @@ pub fn Parser(comptime Err: type, comptime parser_options: ParserOptions) type {
                 .ref => {
                     p.dataAs(*const fn () Self)().firstSet(set);
                 },
-                .then => {
+                .then, .otherwise => {
                     p.dataAs(*const Self).firstSet(set);
                 },
                 .sepby, .sepby1 => {

@@ -324,6 +324,30 @@ test "then" {
     try testing.expectEqual(5, call_count);
 }
 
+test "otherwise" {
+    const Q = combinato.Parser(error{}, .{ .UserData = *i8 });
+    const R = struct {
+        fn pass(ok: *i8, _: []const u8) Q.Error!void {
+            ok.* = 1;
+        }
+        fn fail(ok: *i8, _: []const u8) Q.Error!void {
+            ok.* = -1;
+        }
+    };
+
+    const p = Q.lowercase.some().then(R.pass).otherwise(R.fail);
+    var status: i8 = 0;
+    {
+        const r = p.run(&p, &status, "ABC");
+        try testing.expectError(error.ParseFailure, r);
+        try testing.expectEqual(-1, status);
+    }
+    {
+        _ = try p.run(&p, &status, "abc");
+        try testing.expectEqual(1, status);
+    }
+}
+
 test "bytes to hex" {
     var list = std.ArrayList(u8).init(testing.allocator);
     defer list.deinit();
